@@ -83,6 +83,67 @@ class SEBlock(nn.Module):
         return feat_big * self.main(feat_small)
 
 
+class Flatten(nn.Module):
+    def forward(self, x):
+        return x.view(x.size(0), -1)
+
+
+class ChannelGate(nn.Module):
+    def __init__(self, ch_in, ch_out, reduction_ratio=16):
+        super(ChannelGate, self).__init__()
+        self.gate_channels = ch_in
+        self.mlp = nn.Sequential(
+            Flatten(),
+            nn.Linear(ch_in, ch_in // reduction_ratio),
+            nn.ReLU(),
+            nn.Linear(ch_in // reduction_ratio, ch_out),
+            nn.Sigmoid()
+        )
+        self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
+        self.maxpool = nn.AdaptiveMaxPool2d((1, 1))
+
+    def forward(self, feat_small, feat_big):
+        feat_small_avg_pool = self.mlp(self.avgpool(feat_small))
+        feat_small_max_pool = self.mlp(self.maxpool(feat_small))
+        attention = feat_small_avg_pool + feat_small_max_pool
+        attention = attention.unsqueeze(2).unsqueeze(3).expand_as(feat_big)
+        return feat_big*attention
+
+
+class SpatialGate(nn.Module):
+    def __init__(self):
+        super(SpatialGate, self).__init__()
+        self.conv = nn.Sequential(
+            nn.Conv2d(2, 1, 7, padding=3),
+            nn.BatchNorm2d(1),
+            nn.Sigmoid()
+        )
+
+    def forward(self, x):
+        x_avg_pool = torch.mean(x, 1).unsqueeze(1)
+        x_max_pool = torch.max(x, 1)[0].unsqueeze(1)
+        attention = torch.cat((x_avg_pool, x_max_pool), dim=1)
+        attention = self.conv(attention)
+        return x * attention
+
+
+class ModifiedCBAM(nn.Module):
+    def __init__(self, ch_in, ch_out, reduction_ratio=16, channel_attention=True, spatial_attention=True):
+        super().__init__()
+        self.channel_attention, self.spatial_attention = channel_attention, spatial_attention
+        if channel_attention:
+            self.ChannelGate = ChannelGate(ch_in, ch_out, reduction_ratio)
+        if spatial_attention:
+            self.SpatialGate = SpatialGate()
+
+    def forward(self, feat_small, feat_big):
+        if self.channel_attention:
+            feat_big = self.ChannelGate(feat_small, feat_big)
+        if self.spatial_attention:
+            feat_big = self.SpatialGate(feat_big)
+        return feat_big
+
+
 class InitLayer(nn.Module):
     def __init__(self, nz, channel):
         super().__init__()
@@ -139,16 +200,16 @@ class Generator(nn.Module):
         self.feat_128 = UpBlockComp(nfc[64], nfc[128])  
         self.feat_256 = UpBlock(nfc[128], nfc[256]) 
 
-        self.se_64  = SEBlock(nfc[4], nfc[64])
-        self.se_128 = SEBlock(nfc[8], nfc[128])
-        self.se_256 = SEBlock(nfc[16], nfc[256])
+        self.se_64  = ModifiedCBAM(nfc[4], nfc[64])
+        self.se_128 = ModifiedCBAM(nfc[8], nfc[128])
+        self.se_256 = ModifiedCBAM(nfc[16], nfc[256])
 
         self.to_128 = conv2d(nfc[128], nc, 1, 1, 0, bias=False) 
         self.to_big = conv2d(nfc[im_size], nc, 3, 1, 1, bias=False) 
         
         if im_size > 256:
             self.feat_512 = UpBlockComp(nfc[256], nfc[512]) 
-            self.se_512 = SEBlock(nfc[32], nfc[512])
+            self.se_512 = ModifiedCBAM(nfc[32], nfc[512])
         if im_size > 512:
             self.feat_1024 = UpBlock(nfc[512], nfc[1024])  
         
@@ -251,9 +312,9 @@ class Discriminator(nn.Module):
                             batchNorm2d(nfc[8]), nn.LeakyReLU(0.2, inplace=True),
                             conv2d(nfc[8], 1, 4, 1, 0, bias=False))
 
-        self.se_2_16 = SEBlock(nfc[512], nfc[64])
-        self.se_4_32 = SEBlock(nfc[256], nfc[32])
-        self.se_8_64 = SEBlock(nfc[128], nfc[16])
+        self.se_2_16 = ModifiedCBAM(nfc[512], nfc[64])
+        self.se_4_32 = ModifiedCBAM(nfc[256], nfc[32])
+        self.se_8_64 = ModifiedCBAM(nfc[128], nfc[16])
         
         self.down_from_small = nn.Sequential( 
                                             conv2d(nc, nfc[256], 4, 2, 1, bias=False), 

@@ -1,5 +1,5 @@
-python train.py --path ./few-shot-image-datasets\few-shot-images\100-shot-obama\img --name ./100-shot-obama --batch_size=2
-cd ./train_results/100-shot-obama
+python train.py --path ./few-shot-image-datasets/few-shot-images/100-shot-grumpy_cat/img --name ./[ModifiedCBAM]100-shot-grumpy_cat --batch_size=2
+cd ./train_results/[ModifiedCBAM]100-shot-grumpy_cat
 # eval.py의 start_iter와 end_iter가 train.py시 n_iter 사이의 값이어야 함을 유의
 python eval.py --n_sample 100
-python eval_metric.py --real_image_path=./few-shot-image-datasets/few-shot-images/[FastGAN]100-shot-grumpy_cat --fake_image_path=./train_results/test/100-shot-grumpy_cat/eval_30000,./train_results/test/100-shot-grumpy_cat/eval_40000,./train_results/test/100-shot-grumpy_cat/eval_50000
+python eval_metric.py --real_image_path=./few-shot-image-datasets/few-shot-images/100-shot-grumpy_cat/img --fake_image_path=./train_results/[ModifiedCBAM]100-shot-grumpy_cat
