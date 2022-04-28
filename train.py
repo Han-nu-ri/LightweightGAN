@@ -15,9 +15,9 @@ from operation import copy_G_params, load_params, get_dir
 from operation import ImageFolder, InfiniteSamplerWrapper
 from diffaug import DiffAugment
 policy = 'color,translation'
-import lpips
+import lpip
 import time
-percept = lpips.PerceptualLoss(model='net-lin', net='vgg', use_gpu=True)
+percept = lpip.PerceptualLoss(model='net-lin', net='vgg', use_gpu=True)
 _start_time = time.time()
 
 
@@ -49,9 +49,10 @@ def train_d(net, data, label="real"):
     """Train function of discriminator"""
     if label=="real":
         part = random.randint(0, 3)
-        pred, [rec_all, rec_small, rec_part] = net(data, label, part=part)
+        pred, [rec_img_from_netG, rec_all, rec_small, rec_part] = net(data, label, part=part)
         err = F.relu(  torch.rand_like(pred) * 0.2 + 0.8 -  pred).mean() + \
-            percept( rec_all, F.interpolate(data, rec_all.shape[2]) ).sum() +\
+              percept(rec_img_from_netG, F.interpolate(data, rec_img_from_netG.shape[2])).sum() + \
+              percept( rec_all, F.interpolate(data, rec_all.shape[2]) ).sum() +\
             percept( rec_small, F.interpolate(data, rec_small.shape[2]) ).sum() +\
             percept( rec_part, F.interpolate(crop_image_by_part(data, part), rec_part.shape[2]) ).sum()
         err.backward()
@@ -117,7 +118,7 @@ def train(args):
     netG = Generator(ngf=ngf, nz=nz, im_size=im_size)
     netG.apply(weights_init)
 
-    netD = Discriminator(ndf=ndf, im_size=im_size)
+    netD = Discriminator(ndf=ndf, im_size=im_size, netG=netG)
     netD.apply(weights_init)
 
     netG.to(device)
@@ -126,8 +127,10 @@ def train(args):
     avg_param_G = copy_G_params(netG)
 
     fixed_noise = torch.FloatTensor(8, nz).normal_(0, 1).to(device)
-    
-    # TODO: optimizerG, D 코드 부분 수정 필요
+
+    optimizerG = optim.Adam(netG.parameters(), lr=nlr, betas=(nbeta1, 0.999))
+    optimizerD = optim.Adam(netD.parameters(), lr=nlr, betas=(nbeta1, 0.999))
+
     if checkpoint != 'None':
         ckpt = torch.load(checkpoint)
         netG.load_state_dict(ckpt['g'])
@@ -142,9 +145,6 @@ def train(args):
         netG = nn.DataParallel(netG.to(device))
         netD = nn.DataParallel(netD.to(device))
 
-    optimizerG = optim.Adam(netG.parameters(), lr=nlr, betas=(nbeta1, 0.999))
-    optimizerD = optim.Adam(netD.parameters(), lr=nlr, betas=(nbeta1, 0.999))
-    
     for iteration in tqdm(range(current_iteration, total_iterations+1)):
         real_image = next(dataloader)
         real_image = real_image.to(device)
@@ -155,15 +155,10 @@ def train(args):
 
         real_image = DiffAugment(real_image, policy=policy)
         fake_images = [DiffAugment(fake, policy=policy) for fake in fake_images]
-        
-        ## 2. train Discriminator
-        netD.zero_grad()
 
-        err_dr, rec_img_all, rec_img_small, rec_img_part = train_d(netD, real_image, label="real")
-        train_d(netD, [fi.detach() for fi in fake_images], label="fake")
-        optimizerD.step()
-        
-        ## 3. train Generator
+        ## 2. train Generator
+        # 아래 링크 참고하여 Generator -> Discriminator 순서로 train
+        # https://study-grow.tistory.com/entry/pytorch-error-GAN%ED%95%99%EC%8A%B5%EC%8B%9C-%EC%97%90%EB%9F%AC-RuntimeError-one-of-the-variables-needed-for-gradient-computation-has-been-modified-by-an-inplace-operation-%EC%97%90%EB%9F%AC-%EB%B0%9C%EC%83%9D%EC%8B%9C-%EB%8C%80%EC%B2%98%EB%B2%95
         netG.zero_grad()
         pred_g = netD(fake_images, "fake")
         err_g = -pred_g.mean()
@@ -171,11 +166,29 @@ def train(args):
         err_g.backward()
         optimizerG.step()
 
+        ## 3. train Discriminator
+        netD.zero_grad()
+
+        err_dr, rec_img_all, rec_img_small, rec_img_part = train_d(netD, real_image, label="real")
+        train_d(netD, [fi.detach() for fi in fake_images], label="fake")
+        optimizerD.step()
+
         for p, avg_p in zip(netG.parameters(), avg_param_G):
             avg_p.mul_(0.999).add_(0.001 * p.data)
 
         if iteration % 100 == 0:
             print("GAN: loss d: %.5f    loss g: %.5f"%(err_dr, -err_g.item()))
+
+        if iteration % (save_interval*50) == 0 or iteration == total_iterations:
+            torch.save({'g':netG.state_dict(),
+                        'd':netD.state_dict(),
+                        'g_ema': avg_param_G,
+                        'opt_g': optimizerG.state_dict(),
+                        'opt_d': optimizerD.state_dict()}, saved_model_folder+'/all_%d.pth'%iteration)
+            backup_para = copy_G_params(netG)
+            load_params(netG, avg_param_G)
+            torch.save({'g':netG.state_dict(),'d':netD.state_dict()}, saved_model_folder+'/%d.pth'%iteration)
+            load_params(netG, backup_para)
 
         if iteration % (save_interval*10) == 0:
             backup_para = copy_G_params(netG)
@@ -188,16 +201,6 @@ def train(args):
                         rec_img_part]).add(1).mul(0.5), saved_image_folder+'/rec_%d.jpg'%iteration )
             load_params(netG, backup_para)
 
-        if iteration % (save_interval*50) == 0 or iteration == total_iterations:
-            backup_para = copy_G_params(netG)
-            load_params(netG, avg_param_G)
-            torch.save({'g':netG.state_dict(),'d':netD.state_dict()}, saved_model_folder+'/%d.pth'%iteration)
-            load_params(netG, backup_para)
-            torch.save({'g':netG.state_dict(),
-                        'd':netD.state_dict(),
-                        'g_ema': avg_param_G,
-                        'opt_g': optimizerG.state_dict(),
-                        'opt_d': optimizerD.state_dict()}, saved_model_folder+'/all_%d.pth'%iteration)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='region gan')

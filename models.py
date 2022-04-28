@@ -128,7 +128,7 @@ class SpatialGate(nn.Module):
 
 
 class ModifiedCBAM(nn.Module):
-    def __init__(self, ch_in, ch_out, reduction_ratio=16, channel_attention=True, spatial_attention=True):
+    def __init__(self, ch_in, ch_out, reduction_ratio=16, channel_attention=True, spatial_attention=False):
         super().__init__()
         self.channel_attention, self.spatial_attention = channel_attention, spatial_attention
         if channel_attention:
@@ -200,16 +200,16 @@ class Generator(nn.Module):
         self.feat_128 = UpBlockComp(nfc[64], nfc[128])  
         self.feat_256 = UpBlock(nfc[128], nfc[256]) 
 
-        self.se_64  = ModifiedCBAM(nfc[4], nfc[64])
-        self.se_128 = ModifiedCBAM(nfc[8], nfc[128])
-        self.se_256 = ModifiedCBAM(nfc[16], nfc[256])
+        self.se_64  = SEBlock(nfc[4], nfc[64])
+        self.se_128 = SEBlock(nfc[8], nfc[128])
+        self.se_256 = SEBlock(nfc[16], nfc[256])
 
         self.to_128 = conv2d(nfc[128], nc, 1, 1, 0, bias=False) 
         self.to_big = conv2d(nfc[im_size], nc, 3, 1, 1, bias=False) 
         
         if im_size > 256:
             self.feat_512 = UpBlockComp(nfc[256], nfc[512]) 
-            self.se_512 = ModifiedCBAM(nfc[32], nfc[512])
+            self.se_512 = SEBlock(nfc[32], nfc[512])
         if im_size > 512:
             self.feat_1024 = UpBlock(nfc[512], nfc[1024])  
         
@@ -239,6 +239,29 @@ class Generator(nn.Module):
         im_1024 = torch.tanh(self.to_big(feat_1024))
 
         return [im_1024, im_128]
+
+    def forward_from_middle_layer(self, feat_8):
+        feat_16 = self.feat_16(feat_8)
+        feat_32 = self.feat_32(feat_16)
+
+        feat_64 = self.feat_64(feat_32)
+
+        feat_128 = self.se_128(feat_8, self.feat_128(feat_64))
+
+        feat_256 = self.se_256(feat_16, self.feat_256(feat_128))
+
+        if self.im_size == 256:
+            return [self.to_big(feat_256), self.to_128(feat_128)]
+
+        feat_512 = self.se_512(feat_32, self.feat_512(feat_256))
+        if self.im_size == 512:
+            return [self.to_big(feat_512), self.to_128(feat_128)]
+
+        feat_1024 = self.feat_1024(feat_512)
+
+        im_1024 = torch.tanh(self.to_big(feat_1024))
+
+        return F.interpolate(im_1024, 128)
 
 
 class DownBlock(nn.Module):
@@ -275,7 +298,7 @@ class DownBlockComp(nn.Module):
 
 
 class Discriminator(nn.Module):
-    def __init__(self, ndf=64, nc=3, im_size=512):
+    def __init__(self, ndf=64, nc=3, im_size=512, netG=None):
         super(Discriminator, self).__init__()
         self.ndf = ndf
         self.im_size = im_size
@@ -312,9 +335,9 @@ class Discriminator(nn.Module):
                             batchNorm2d(nfc[8]), nn.LeakyReLU(0.2, inplace=True),
                             conv2d(nfc[8], 1, 4, 1, 0, bias=False))
 
-        self.se_2_16 = ModifiedCBAM(nfc[512], nfc[64])
-        self.se_4_32 = ModifiedCBAM(nfc[256], nfc[32])
-        self.se_8_64 = ModifiedCBAM(nfc[128], nfc[16])
+        self.se_2_16 = SEBlock(nfc[512], nfc[64])
+        self.se_4_32 = SEBlock(nfc[256], nfc[32])
+        self.se_8_64 = SEBlock(nfc[128], nfc[16])
         
         self.down_from_small = nn.Sequential( 
                                             conv2d(nc, nfc[256], 4, 2, 1, bias=False), 
@@ -325,6 +348,7 @@ class Discriminator(nn.Module):
 
         self.rf_small = conv2d(nfc[32], 1, 4, 1, 0, bias=False)
 
+        self.netG = netG
         self.decoder_big = SimpleDecoder(nfc[16], nc)
         self.decoder_part = SimpleDecoder(nfc[32], nc)
         self.decoder_small = SimpleDecoder(nfc[32], nc)
@@ -354,25 +378,28 @@ class Discriminator(nn.Module):
         #rf_1 = torch.cat([self.rf_small_1(feat_small).view(-1),self.rf_small_2(feat_small).view(-1)])
         rf_1 = self.rf_small(feat_small).view(-1)
 
-        if label=='real':    
-            rec_img_big = self.decoder_big(feat_last)
-            rec_img_small = self.decoder_small(feat_small)
-
-            assert part is not None
-            rec_img_part = None
-            if part==0:
-                rec_img_part = self.decoder_part(feat_32[:,:,:8,:8])
-            if part==1:
-                rec_img_part = self.decoder_part(feat_32[:,:,:8,8:])
-            if part==2:
-                rec_img_part = self.decoder_part(feat_32[:,:,8:,:8])
-            if part==3:
-                rec_img_part = self.decoder_part(feat_32[:,:,8:,8:])
-
-            return torch.cat([rf_0, rf_1]) , [rec_img_big, rec_img_small, rec_img_part]
+        if label=='real':
+            return self.post_forward_for_real_label(feat_last, feat_small, feat_32, part, rf_0, rf_1)
 
         return torch.cat([rf_0, rf_1]) 
 
+    def post_forward_for_real_label(self, feat_last, feat_small, feat_32, part, rf_0, rf_1):
+        rec_img_from_netG = self.netG.forward_from_middle_layer(feat_last)
+        rec_img_big = self.decoder_big(feat_last)
+        rec_img_small = self.decoder_small(feat_small)
+
+        assert part is not None
+        rec_img_part = None
+        if part == 0:
+            rec_img_part = self.decoder_part(feat_32[:, :, :8, :8])
+        if part == 1:
+            rec_img_part = self.decoder_part(feat_32[:, :, :8, 8:])
+        if part == 2:
+            rec_img_part = self.decoder_part(feat_32[:, :, 8:, :8])
+        if part == 3:
+            rec_img_part = self.decoder_part(feat_32[:, :, 8:, 8:])
+
+        return torch.cat([rf_0, rf_1]), [rec_img_from_netG, rec_img_big, rec_img_small, rec_img_part]
 
 class SimpleDecoder(nn.Module):
     """docstring for CAN_SimpleDecoder"""
