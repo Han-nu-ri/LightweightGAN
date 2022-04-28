@@ -150,3 +150,6 @@ lpips/__pycache__/*
 
 # info_pickle
 infor_pickle/*
+
+# wandb
+wandb/*
