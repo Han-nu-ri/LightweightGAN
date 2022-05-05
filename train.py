@@ -78,7 +78,6 @@ def train(args):
     nbeta1 = 0.5
     use_cuda = True
     multi_gpu = True
-    dataloader_workers = 8
     current_iteration = 0
     save_interval = 100
     saved_model_folder, saved_image_folder = get_dir(args)
@@ -131,19 +130,21 @@ def train(args):
     optimizerG = optim.Adam(netG.parameters(), lr=nlr, betas=(nbeta1, 0.999))
     optimizerD = optim.Adam(netD.parameters(), lr=nlr, betas=(nbeta1, 0.999))
 
+
+    if multi_gpu:
+        netG = nn.DataParallel(netG.to(device))
+        netD = nn.DataParallel(netD.to(device))
+
     if checkpoint != 'None':
+        # load_state_dict에서 error 발생 시 참조: https://github.com/odegeasslbc/FastGAN-pytorch/issues/26
         ckpt = torch.load(checkpoint)
         netG.load_state_dict(ckpt['g'])
         netD.load_state_dict(ckpt['d'])
         avg_param_G = ckpt['g_ema']
         optimizerG.load_state_dict(ckpt['opt_g'])
         optimizerD.load_state_dict(ckpt['opt_d'])
-        current_iteration = int(checkpoint.split('_')[-1].split('.')[0])
+        current_iteration = int(checkpoint.split('_')[-1].split('.')[0]) + 1
         del ckpt
-        
-    if multi_gpu:
-        netG = nn.DataParallel(netG.to(device))
-        netD = nn.DataParallel(netD.to(device))
 
     for iteration in tqdm(range(current_iteration, total_iterations+1)):
         real_image = next(dataloader)

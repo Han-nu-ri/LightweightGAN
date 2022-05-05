@@ -1,4 +1,4 @@
-python train.py --path ./few-shot-image-datasets/few-shot-images/100-shot-grumpy_cat/img --name ./[AddNetGIntoNetD]100-shot-grumpy_cat --batch_size=2 --ckpt=./train_results/[AddNetGIntoNetD]100-shot-grumpy_cat/models/all_15000.pth
+python train.py --path ./few-shot-image-datasets/few-shot-images/100-shot-grumpy_cat/img --name ./[AddNetGIntoNetD]100-shot-grumpy_cat --batch_size=2 --ckpt=./train_results/[AddNetGIntoNetD]100-shot-grumpy_cat/models/all_20000.pth
 cd ./train_results/[AddNetGIntoNetD]100-shot-grumpy_cat
 # eval.py의 start_iter와 end_iter가 train.py시 n_iter 사이의 값이어야 함을 유의
 python eval.py --n_sample 100
