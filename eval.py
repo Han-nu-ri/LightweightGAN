@@ -45,7 +45,7 @@ if __name__ == "__main__":
     parser.add_argument('--artifacts', type=str, default=".", help='path to artifacts.')
     parser.add_argument('--cuda', type=int, default=0, help='index of gpu to use')
     # --start_iter와 --end_iter는 train시 n_iter 사이에 있는 값이어야 한다.
-    parser.add_argument('--start_iter', type=int, default=3)
+    parser.add_argument('--start_iter', type=int, default=1)
     parser.add_argument('--end_iter', type=int, default=5)
 
     parser.add_argument('--dist', type=str, default='.')
@@ -63,8 +63,8 @@ if __name__ == "__main__":
     net_ig = Generator( ngf=64, nz=noise_dim, nc=3, im_size=args.im_size)#, big=args.big )
     net_ig.to(device)
 
-    for epoch in [10000*i for i in range(args.start_iter, args.end_iter+1)]:
-        ckpt = f"{args.artifacts}/models/{epoch}.pth"
+    for each_iter in range(args.start_iter*5000, args.end_iter*10000+1, 5000):
+        ckpt = f"{args.artifacts}/models/{each_iter}.pth"
         checkpoint = torch.load(ckpt, map_location=lambda a,b: a)
         # Remove prefix `module`.
         checkpoint['g'] = {k.replace('module.', ''): v for k, v in checkpoint['g'].items()}
@@ -72,13 +72,13 @@ if __name__ == "__main__":
         #load_params(net_ig, checkpoint['g_ema'])
 
         #net_ig.eval()
-        print('load checkpoint success, epoch %d'%epoch)
+        print('load checkpoint success, epoch %d'%each_iter)
 
         net_ig.to(device)
 
         del checkpoint
 
-        dist = 'eval_%d'%(epoch)
+        dist = 'eval_%d'%(each_iter)
         dist = os.path.join(dist, 'img')
         os.makedirs(dist, exist_ok=True)
 

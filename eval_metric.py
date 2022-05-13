@@ -52,7 +52,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='evaluation metric')
     parser.add_argument('--real_image_path', type=str)
     parser.add_argument('--fake_image_path', type=str)
-    parser.add_argument('--start_iter', type=int, default=3)
+    parser.add_argument('--start_iter', type=int, default=1)
     parser.add_argument('--end_iter', type=int, default=5)
     args = parser.parse_args()
 
@@ -60,7 +60,7 @@ if __name__ == "__main__":
     wandb_name = args.fake_image_path.split('/')[-1]
     wandb.init(project="LightweightGAN", config=args, name=wandb_name)
     try:
-        for each_iter in range(args.start_iter*10000, (args.end_iter+1)*10000, 10000):
+        for each_iter in range(args.start_iter*5000, args.end_iter*10000+1, 5000):
             each_fake_image_path = args.fake_image_path + '/eval_' + str(each_iter)
             real_image_data_loader = get_data_loader(args.real_image_path)
             fake_image_data_loader = get_data_loader(each_fake_image_path)
