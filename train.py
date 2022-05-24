@@ -50,16 +50,19 @@ def train_d(net, data, label="real"):
     if label=="real":
         part = random.randint(0, 3)
         pred, [rec_img_from_netG, rec_all, rec_small, rec_part] = net(data, label, part=part)
-        err = F.relu(  torch.rand_like(pred) * 0.2 + 0.8 -  pred).mean() + \
-              percept(rec_img_from_netG, F.interpolate(data, rec_img_from_netG.shape[2])).sum() + \
-              percept( rec_all, F.interpolate(data, rec_all.shape[2]) ).sum() +\
-            percept( rec_small, F.interpolate(data, rec_small.shape[2]) ).sum() +\
-            percept( rec_part, F.interpolate(crop_image_by_part(data, part), rec_part.shape[2]) ).sum()
+        err = F.relu(torch.rand_like(pred) * 0.2 + 0.8 - pred).mean() + \
+              percept(rec_img_from_netG, F.interpolate(data, rec_img_from_netG.shape[2])).sum()
         err.backward()
         return pred.mean().item(), rec_all, rec_small, rec_part
     else:
         pred = net(data, label)
-        err = F.relu( torch.rand_like(pred) * 0.2 + 0.8 + pred).mean()
+        cosine_sim_error = 0
+        cos = nn.CosineSimilarity(dim=0, eps=1e-6)
+        for i in range(0, len(pred)//50-1):
+            cos_between_two_vectors = cos(pred[25*i:25+25*i], pred[25*(i+1):25+25*(i+1)])
+            cosine_sim_error += 10 * max(cos_between_two_vectors - 0.9, 0)
+        cosine_sim_error = cosine_sim_error/(len(pred)//50-1)
+        err = F.relu( torch.rand_like(pred) * 0.2 + 0.8 + pred).mean() + cosine_sim_error
         err.backward()
         return pred.mean().item()
         

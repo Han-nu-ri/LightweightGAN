@@ -77,6 +77,9 @@ if __name__ == "__main__":
             metrics['lpips'] = lpips_score
             print(metrics)
 
+            del real_image_data_loader
+            del fake_image_data_loader
+            del fake_image_tensor
             wandb.log(metrics, step=each_iter)
     except Exception as exception:
         print(str(exception))

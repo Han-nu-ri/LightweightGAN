@@ -349,9 +349,6 @@ class Discriminator(nn.Module):
         self.rf_small = conv2d(nfc[32], 1, 4, 1, 0, bias=False)
 
         self.netG = netG
-        self.decoder_big = SimpleDecoder(nfc[16], nc)
-        self.decoder_part = SimpleDecoder(nfc[32], nc)
-        self.decoder_small = SimpleDecoder(nfc[32], nc)
         
     def forward(self, imgs, label, part=None):
         if type(imgs) is not list:
@@ -385,21 +382,7 @@ class Discriminator(nn.Module):
 
     def post_forward_for_real_label(self, feat_last, feat_small, feat_32, part, rf_0, rf_1):
         rec_img_from_netG = self.netG.forward_from_middle_layer(feat_last)
-        rec_img_big = self.decoder_big(feat_last)
-        rec_img_small = self.decoder_small(feat_small)
-
-        assert part is not None
-        rec_img_part = None
-        if part == 0:
-            rec_img_part = self.decoder_part(feat_32[:, :, :8, :8])
-        if part == 1:
-            rec_img_part = self.decoder_part(feat_32[:, :, :8, 8:])
-        if part == 2:
-            rec_img_part = self.decoder_part(feat_32[:, :, 8:, :8])
-        if part == 3:
-            rec_img_part = self.decoder_part(feat_32[:, :, 8:, 8:])
-
-        return torch.cat([rf_0, rf_1]), [rec_img_from_netG, rec_img_big, rec_img_small, rec_img_part]
+        return torch.cat([rf_0, rf_1]), [rec_img_from_netG, rec_img_from_netG, rec_img_from_netG, rec_img_from_netG]
 
 class SimpleDecoder(nn.Module):
     """docstring for CAN_SimpleDecoder"""
