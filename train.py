@@ -56,13 +56,7 @@ def train_d(net, data, label="real"):
         return pred.mean().item(), rec_all, rec_small, rec_part
     else:
         pred = net(data, label)
-        cosine_sim_error = 0
-        cos = nn.CosineSimilarity(dim=0, eps=1e-6)
-        for i in range(0, len(pred)//50-1):
-            cos_between_two_vectors = cos(pred[25*i:25+25*i], pred[25*(i+1):25+25*(i+1)])
-            cosine_sim_error += 10 * max(cos_between_two_vectors - 0.9, 0)
-        cosine_sim_error = cosine_sim_error/(len(pred)//50-1)
-        err = F.relu( torch.rand_like(pred) * 0.2 + 0.8 + pred).mean() + cosine_sim_error
+        err = F.relu( torch.rand_like(pred) * 0.2 + 0.8 + pred).mean()
         err.backward()
         return pred.mean().item()
         
@@ -156,23 +150,14 @@ def train(args):
         noise = torch.Tensor(current_batch_size, nz).normal_(0, 1).to(device)
 
         fake_images = netG(noise)
-
         real_image = DiffAugment(real_image, policy=policy)
         fake_images = [DiffAugment(fake, policy=policy) for fake in fake_images]
 
         ## 2. train Generator
-        # 아래 링크 참고하여 Generator -> Discriminator 순서로 train
-        # https://study-grow.tistory.com/entry/pytorch-error-GAN%ED%95%99%EC%8A%B5%EC%8B%9C-%EC%97%90%EB%9F%AC-RuntimeError-one-of-the-variables-needed-for-gradient-computation-has-been-modified-by-an-inplace-operation-%EC%97%90%EB%9F%AC-%EB%B0%9C%EC%83%9D%EC%8B%9C-%EB%8C%80%EC%B2%98%EB%B2%95
-        netG.zero_grad()
-        pred_g = netD(fake_images, "fake")
-        err_g = -pred_g.mean()
-
-        err_g.backward()
-        optimizerG.step()
+        err_g = train_g(fake_images, netD, netG, optimizerG)
 
         ## 3. train Discriminator
         netD.zero_grad()
-
         err_dr, rec_img_all, rec_img_small, rec_img_part = train_d(netD, real_image, label="real")
         train_d(netD, [fi.detach() for fi in fake_images], label="fake")
         optimizerD.step()
@@ -204,6 +189,21 @@ def train(args):
                         rec_img_all, rec_img_small,
                         rec_img_part]).add(1).mul(0.5), saved_image_folder+'/rec_%d.jpg'%iteration )
             load_params(netG, backup_para)
+
+
+def train_g(fake_images, netD, netG, optimizerG):
+    netG.zero_grad()
+    pred_g = netD(fake_images, "fake")
+    cosine_sim_error = 0
+    cos = nn.CosineSimilarity(dim=0, eps=1e-6)
+    for i in range(0, len(pred_g) // 50 - 1):
+        cos_between_two_vectors = cos(pred_g[25 * i:25 + 25 * i], pred_g[25 * (i + 1):25 + 25 * (i + 1)])
+        cosine_sim_error += cos_between_two_vectors  # cosine_sim_error += max(cos_between_two_vectors - 0.9, 0)
+    cosine_sim_error = cosine_sim_error / (len(pred_g) // 50 - 1)
+    err_g = -pred_g.mean() + cosine_sim_error
+    err_g.backward()
+    optimizerG.step()
+    return err_g
 
 
 if __name__ == "__main__":
